@@ -1,0 +1,15 @@
+{
+  "venv_found": "C:\\Users\\Simon\\.conda\\envs\\memory_v3\\python.exe",
+  "venv_exists": true,
+  "boot_success": true,
+  "history_count": 10,
+  "key_memories": [
+    "安哥的生日是12月25日",
+    "安哥的生日是12月25日",
+    "安哥喜欢喝普洱茶"
+  ],
+  "errors": [],
+  "stdout": "✅ 记忆系统启动成功\n📚 已加载 10 条历史记忆\n",
+  "stderr": "",
+  "returncode": 0
+}

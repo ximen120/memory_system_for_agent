@@ -1,0 +1,71 @@
+# 记忆数据 - 用户隐私，不上传
+data/auto_memory/
+data/my_memories/
+data/demo/
+
+# 环境变量和敏感配置
+.env
+.env.local
+.env.*.local
+
+# Python缓存
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 虚拟环境
+venv/
+ENV/
+env/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 测试缓存
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# 日志
+*.log
+logs/
+
+# 模型文件（大文件）
+models/
+*.bin
+*.pt
+*.pth
+*.safetensors
+
+# 操作系统
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 临时文件
+tmp/
+temp/
+*.tmp
