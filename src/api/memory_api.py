@@ -12,6 +12,12 @@ from pathlib import Path
 
 # 导入检索模块
 from retrieval import EmbeddingService, VectorSearch, HybridSearch
+# 导入存储模块
+from storage.json_storage import JsonStorage
+
+# 导入核心模型
+from core.memory_unit import MemoryUnit
+
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -94,11 +100,59 @@ class MemoryAPI:
             keyword_weight=keyword_weight
         )
         
-        # 简单的JSON存储（后续可替换）
+        # 初始化存储后端
+        storage_dir = self.data_dir / "memories"
+        self.json_storage = JsonStorage(str(storage_dir))
+        
+        # 内存缓存（优先从内存检索，降级到存储检索）
         self._memories: Dict[str, Memory] = {}
+        
+        # 启动时加载已有记忆
+        self._load_existing_memories()
         
         logger.info(f"MemoryAPI初始化完成: data_dir={data_dir}")
     
+    
+    def _load_existing_memories(self) -> None:
+        """从存储加载已有记忆到内存缓存"""
+        try:
+            existing_memories = self.json_storage.query(limit=99999)
+            for memory_unit in existing_memories:
+                # 转换为Memory对象
+                memory = Memory(
+                    memory_id=memory_unit.memory_id,
+                    content=memory_unit.content,
+                    memory_type=memory_unit.memory_type,
+                    importance=memory_unit.importance,
+                    tags=memory_unit.tags,
+                    created_at=memory_unit.created_at,
+                    updated_at=memory_unit.updated_at,
+                    metadata={
+                        "source": memory_unit.source,
+                        "access_count": memory_unit.access_count,
+                        "last_accessed_at": memory_unit.last_accessed_at
+                    }
+                )
+                self._memories[memory_unit.memory_id] = memory
+                
+                # 添加到向量检索
+                if self.embedding_service.is_available() and memory_unit.embedding:
+                    self.vector_search.add_document(
+                        memory_id=memory_unit.memory_id,
+                        content=memory_unit.content,
+                        embedding=memory_unit.embedding,
+                        memory_type=memory_unit.memory_type,
+                        metadata={
+                            "importance": memory_unit.importance,
+                            "tags": memory_unit.tags,
+                            "source": memory_unit.source
+                        }
+                    )
+            
+            logger.info(f"从存储加载了 {len(existing_memories)} 条记忆")
+        except Exception as e:
+            logger.error(f"加载已有记忆失败: {e}")
+
     def add_memory(
         self,
         content: str,
@@ -145,18 +199,41 @@ class MemoryAPI:
         )
         
         # 保存到内存存储
-        self._memories[memory_id] = memory
-        
-        # 添加到向量检索（如果Embedding服务可用）
-        if self.embedding_service.is_available():
-            self.vector_search.add_document(
+
+        # 持久化到存储
+        try:
+            memory_unit = MemoryUnit(
                 memory_id=memory_id,
                 content=content,
                 memory_type=memory_type,
                 importance=importance,
-                tags=tags,
-                metadata=metadata
+                tags=tags or [],
+                created_at=now,
+                updated_at=None,
+                source=metadata.get("source"),
+                access_count=0,
+                last_accessed_at=None
             )
+            self.json_storage.save(memory_unit)
+        except Exception as e:
+            logger.error(f"持久化记忆失败: {e}")
+        self._memories[memory_id] = memory
+        
+        # 添加到向量检索（如果Embedding服务可用）
+        if self.embedding_service.is_available():
+            embedding = self.embedding_service.generate(content)
+            if embedding:
+                self.vector_search.add_document(
+                    memory_id=memory_id,
+                    content=content,
+                    embedding=embedding,
+                    memory_type=memory_type,
+                    metadata={
+                        "importance": importance,
+                        "tags": tags or [],
+                        **metadata
+                    }
+                )
         
         logger.info(f"记忆已添加: {memory_id}")
         return memory_id
@@ -197,8 +274,7 @@ class MemoryAPI:
             hybrid_results = self.hybrid_search.search(
                 query=query,
                 top_k=top_k,
-                min_score=min_score,
-                filters=filters
+                min_score=min_score
             )
             
             for r in hybrid_results:
@@ -306,6 +382,13 @@ class MemoryAPI:
         # 从向量检索删除
         self.vector_search.delete_document(memory_id)
         
+        
+        # 从持久化存储删除
+        try:
+            self.json_storage.delete(memory_id)
+        except Exception as e:
+            logger.error(f"删除持久化记忆失败: {e}")
+        
         logger.info(f"记忆已删除: {memory_id}")
         return True
     
@@ -355,6 +438,26 @@ class MemoryAPI:
                 tags=memory.tags,
                 **memory.metadata
             )
+        
+        
+        # 持久化更新
+        try:
+            # 先加载原始数据
+            original_unit = self.json_storage.load(memory_id)
+            
+            # 更新字段
+            if content is not None:
+                original_unit.update_content(content)
+            if importance is not None:
+                original_unit.importance = importance
+            if tags is not None:
+                original_unit.tags = tags
+            original_unit.updated_at = memory.updated_at
+            
+            # 保存
+            self.json_storage.save(original_unit)
+        except Exception as e:
+            logger.error(f"更新持久化记忆失败: {e}")
         
         logger.info(f"记忆已更新: {memory_id}")
         return True

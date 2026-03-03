@@ -1,5 +1,6 @@
 # 安仔记忆系统 v3.0 依赖列表
 # 安装: pip install -r requirements.txt
+torch>=2.0.0
 
 # 核心依赖
 numpy>=1.24.0

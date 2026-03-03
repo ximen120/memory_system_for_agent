@@ -73,8 +73,8 @@ class UnifiedAPI:
         self.embedding_model = embedding_model
         
         # 初始化各API
-        self.memory_api = MemoryAPI(data_dir=data_dir)
-        self.vector_api = VectorAPI()
+        self.memory_api = MemoryAPI(data_dir=data_dir, embedding_model=embedding_model)
+        self.vector_api = VectorAPI(embedding_service=self.memory_api.embedding_service, vector_search=self.memory_api.vector_search)
         self.hybrid_api = HybridAPI()
         self.keyword_api = KeywordAPI()
         self.router = APIRouter()

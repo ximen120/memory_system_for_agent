@@ -32,7 +32,6 @@ class MemoryUnit(BaseModel):
     
     content: str = Field(
         ...,
-        min_length=1,
         max_length=10000,
         description="记忆内容文本"
     )
@@ -95,22 +94,38 @@ class MemoryUnit(BaseModel):
     
     # ========== 验证器 ==========
     
-    @field_validator('memory_type')
+    @field_validator('memory_type', mode='before')
     @classmethod
-    def validate_memory_type(cls, v: str) -> str:
-        """验证记忆类型"""
+    def validate_memory_type(cls, v) -> str:
+        """验证记忆类型（宽容模式）"""
         valid_types = {'fact', 'preference', 'context', 'task', 'event'}
-        if v not in valid_types:
-            raise ValueError(f"无效的记忆类型 '{v}'，必须是: {', '.join(valid_types)}")
+        if not v or v not in valid_types:
+            return "fact"
         return v
     
-    @field_validator('content')
+    @field_validator('content', mode='before')
     @classmethod
-    def validate_content_not_empty(cls, v: str) -> str:
-        """验证内容不为空"""
-        if not v or not v.strip():
-            raise ValueError("内容不能为空")
-        return v.strip()
+    def validate_content_not_empty(cls, v) -> str:
+        """验证内容不为空（宽容模式）"""
+        if not v or not str(v).strip():
+            return "[空记忆]"
+        return str(v).strip()
+    
+    @field_validator('importance', mode='before')
+    @classmethod
+    def validate_importance(cls, v) -> float:
+        """验证重要性（宽容模式）"""
+        if v is None:
+            return 3.0
+        try:
+            importance = float(v)
+            if importance < 1.0:
+                return 1.0
+            if importance > 5.0:
+                return 5.0
+            return importance
+        except (ValueError, TypeError):
+            return 3.0
     
     @field_validator('tags')
     @classmethod
@@ -137,94 +152,67 @@ class MemoryUnit(BaseModel):
         转换为 ChromaDB 文档格式
         
         Returns:
-            Dict: 包含 id, document, metadata, embedding 的字典
+            ChromaDB 兼容的文档字典
         """
+        metadata = {
+            "memory_type": self.memory_type,
+            "importance": self.importance,
+            "created_at": self.created_at,
+            "source": self.source or "",
+            "tags": ",".join(self.tags),
+            "access_count": self.access_count,
+        }
+        
+        if self.updated_at:
+            metadata["updated_at"] = self.updated_at
+        if self.last_accessed_at:
+            metadata["last_accessed_at"] = self.last_accessed_at
+        
         return {
             "id": self.memory_id,
             "document": self.content,
-            "metadata": {
-                "memory_type": self.memory_type,
-                "importance": self.importance,
-                "created_at": self.created_at,
-                "source": self.source,
-                "tags": self.tags,
-                "access_count": self.access_count,
-            },
+            "metadata": metadata,
             "embedding": self.embedding
         }
     
     @classmethod
-    def from_chroma_document(cls, doc: Dict[str, Any]) -> "MemoryUnit":
+    def from_chroma_result(cls, result: Dict[str, Any]) -> "MemoryUnit":
         """
-        从 ChromaDB 文档格式创建 MemoryUnit
+        从 ChromaDB 查询结果创建 MemoryUnit
         
         Args:
-            doc: ChromaDB 返回的文档字典
-            
-        Returns:
-            MemoryUnit: 重建的记忆单元
+            result: ChromaDB 返回的结果字典
         """
-        metadata = doc.get("metadata", {})
+        metadata = result.get("metadata", {})
+        tags_str = metadata.get("tags", "")
+        tags = [t.strip() for t in tags_str.split(",") if t.strip()] if tags_str else []
         
         return cls(
-            memory_id=doc.get("id", generate_memory_id()),
-            content=doc.get("document", ""),
+            memory_id=result.get("id", ""),
+            content=result.get("document", ""),
             memory_type=metadata.get("memory_type", "fact"),
             importance=metadata.get("importance", 3.0),
             created_at=metadata.get("created_at", now()),
-            source=metadata.get("source"),
-            tags=metadata.get("tags", []),
-            embedding=doc.get("embedding"),
+            updated_at=metadata.get("updated_at"),
+            source=metadata.get("source") or None,
+            tags=tags,
             access_count=metadata.get("access_count", 0),
+            last_accessed_at=metadata.get("last_accessed_at"),
         )
     
-    def __str__(self) -> str:
-        """简洁字符串表示"""
-        content_preview = self.content[:50] + "..." if len(self.content) > 50 else self.content
-        return f"MemoryUnit({self.memory_id}, {self.memory_type}, {content_preview})"
+    @classmethod
+    def from_legacy_dict(cls, data: dict) -> "MemoryUnit":
+        """从旧格式数据创建MemoryUnit，自动修正不合规字段"""
+        # 过滤掉MemoryUnit不认识的字段
+        valid_fields = cls.model_fields.keys()
+        filtered = {k: v for k, v in data.items() if k in valid_fields}
+        
+        return cls(**filtered)
     
     def __repr__(self) -> str:
-        """详细字符串表示"""
         return (
-            f"MemoryUnit("
-            f"id={self.memory_id}, "
-            f"type={self.memory_type}, "
+            f"MemoryUnit(id={self.memory_id!r}, "
+            f"type={self.memory_type!r}, "
             f"importance={self.importance}, "
-            f"content='{self.content[:30]}...'"
-            f")"
+            f"content={self.content[:50]!r}...)"
         )
-
-
-if __name__ == "__main__":
-    # 简单测试
-    print("MemoryUnit 基础测试:\n")
-    
-    # 1. 创建有效记忆
-    memory = MemoryUnit(
-        content="安哥喜欢喝咖啡，每天早上必须一杯美式",
-        memory_type="preference",
-        importance=4.5,
-        tags=["咖啡", "习惯", "安哥"]
-    )
-    print(f"1. 创建记忆: {memory}")
-    print(f"   ID: {memory.memory_id}")
-    print(f"   创建时间: {memory.created_at}")
-    
-    # 2. 更新访问
-    memory.update_access()
-    print(f"\n2. 更新访问: 次数={memory.access_count}, 最后访问={memory.last_accessed_at}")
-    
-    # 3. 转换为 ChromaDB 格式
-    chroma_doc = memory.to_chroma_document()
-    print(f"\n3. ChromaDB格式:\n   {chroma_doc}")
-    
-    # 4. 从 ChromaDB 重建
-    restored = MemoryUnit.from_chroma_document(chroma_doc)
-    print(f"\n4. 重建记忆: {restored}")
-    
-    # 5. 验证错误处理
-    print("\n5. 错误处理测试:")
-    try:
-        bad_memory = MemoryUnit(content="", memory_type="invalid", importance=10)
-    except Exception as e:
-        print(f"   ✅ 捕获错误: {type(e).__name__}")

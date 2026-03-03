@@ -24,6 +24,7 @@ class EmbeddingConfig:
     model_name: str = "all-MiniLM-L6-v2"
     cache_dir: str = "./models"
     device: str = "cpu"
+    offline: bool = True
     max_seq_length: int = 512
 
 
@@ -65,7 +66,8 @@ class EmbeddingService:
             self.config = EmbeddingConfig(
                 model_name=model_name or os.getenv("EMBEDDING_MODEL", "all-MiniLM-L6-v2"),
                 cache_dir=cache_dir or os.getenv("EMBEDDING_CACHE_DIR", "./models"),
-                device=device or os.getenv("EMBEDDING_DEVICE", "cpu")
+                device=device or os.getenv("EMBEDDING_DEVICE", "cpu"),
+                offline=os.getenv("EMBEDDING_OFFLINE", "true").lower() == "true"
             )
         
         self._model = None
@@ -89,6 +91,12 @@ class EmbeddingService:
             return False
         
         try:
+            
+            if self.config.offline:
+                os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+                os.environ.setdefault("HF_HUB_OFFLINE", "1")
+                logger.info("已启用HuggingFace离线模式")
+            
             from sentence_transformers import SentenceTransformer
             
             cache_path = Path(self.config.cache_dir) / self.config.model_name
