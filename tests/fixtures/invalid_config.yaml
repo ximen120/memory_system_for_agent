@@ -1,0 +1,8 @@
+# tests/fixtures/invalid_config.yaml
+global:
+  enabled: true
+
+sync_sources:
+  - type: "file"  # 缺少name字段
+    source_config:
+      path: "test.md"

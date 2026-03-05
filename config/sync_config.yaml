@@ -1,0 +1,74 @@
+# config/sync_config.yaml
+# T001 数据同步配置格式设计
+
+# ========== 全局配置 ==========
+global:
+  enabled: true                    # 是否启用同步功能
+  log_level: "INFO"                # 日志级别
+  sync_on_startup: true            # 启动时是否自动同步
+  default_sync_interval: "daily"   # 默认同步频率
+
+# ========== 数据源配置列表 ==========
+sync_sources:
+  # -------------------------------------------------
+  # 数据源1: TODO-MASTER（最高优先级，易变数据）
+  # -------------------------------------------------
+  - name: "todo_master"              # 唯一标识
+    enabled: true                    # 是否启用
+    type: "file"                     # 数据源类型
+    
+    source_config:                   # 数据源特定配置
+      path: "D:/AnZai_JieYue/02-Plans/TODO-MASTER.md"
+      encoding: "utf-8"
+      watch_changes: true            # 监听文件变化
+    
+    sync_strategy:                   # 同步策略
+      interval: "daily"              # 同步频率
+      time: "00:00"                  # 同步时间（daily时）
+      on_change: true                # 变化时立即同步
+      conflict_resolution: "replace" # 冲突处理: replace/append/skip
+    
+    memory_mapping:                  # 记忆映射
+      memory_type: "task"            # 记忆类型
+      tags: ["待办事项", "总清单", "当前任务", "TODO-MASTER"]
+      importance: 4.0                # 重要度
+      validity_type: "volatile"      # 时效性: 易变
+      expires_after: "1d"            # 1天后过期
+      supersede_old: true            # 替代旧记忆
+      supersede_tags: ["待办事项", "总清单"]  # 替代范围
+    
+    metadata:                        # 自定义元数据
+      source: "TODO-MASTER.md"
+      priority: "high"
+      auto_sync: true
+
+  # -------------------------------------------------
+  # 数据源2: 个人信息（长期有效）
+  # -------------------------------------------------
+  - name: "personal_info"
+    enabled: true
+    type: "file"
+    
+    source_config:
+      path: "D:/AnZai_JieYue/03-Personal/个人信息.md"
+      encoding: "utf-8"
+      watch_changes: false
+    
+    sync_strategy:
+      interval: "weekly"
+      time: "Sun 00:00"              # 每周日零点
+      on_change: false
+      conflict_resolution: "replace"
+    
+    memory_mapping:
+      memory_type: "fact"
+      tags: ["个人信息", "用户资料", "基础数据"]
+      importance: 5.0
+      validity_type: "long_term"     # 长期有效
+      expires_after: "90d"           # 90天后过期
+      supersede_old: true
+      supersede_tags: ["个人信息"]
+    
+    metadata:
+      source: "个人信息.md"
+      priority: "medium"

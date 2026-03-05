@@ -1,0 +1,29 @@
+# tests/fixtures/valid_sync_config.yaml
+global:
+  enabled: true
+  log_level: "INFO"
+  sync_on_startup: true
+  default_sync_interval: "daily"
+
+sync_sources:
+  - name: "test_todo"
+    enabled: true
+    type: "file"
+    source_config:
+      path: "tests/fixtures/test_todo.md"
+      encoding: "utf-8"
+      watch_changes: false
+    sync_strategy:
+      interval: "manual"
+      on_change: false
+      conflict_resolution: "replace"
+    memory_mapping:
+      memory_type: "task"
+      tags: ["测试", "待办"]
+      importance: 3.0
+      validity_type: "short_term"
+      expires_after: "7d"
+      supersede_old: true
+      supersede_tags: ["测试", "待办"]
+    metadata:
+      priority: "medium"
