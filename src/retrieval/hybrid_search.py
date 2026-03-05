@@ -88,7 +88,7 @@ class HybridSearch:
         self,
         query: str,
         top_k: int = 10,
-        min_score: float = 0.1,
+        min_score: float = 0.0,
         use_vector: bool = True,
         use_keyword: bool = True
     ) -> List[HybridSearchResult]:

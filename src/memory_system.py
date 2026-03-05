@@ -25,9 +25,17 @@
 """
 
 import logging
+import os
+import sys
+from pathlib import Path
+
+# 添加src目录到路径
+_src_dir = Path(__file__).parent
+if str(_src_dir) not in sys.path:
+    sys.path.insert(0, str(_src_dir))
+
 from typing import List, Dict, Any, Optional, Union
 from dataclasses import dataclass
-from pathlib import Path
 
 # 配置日志
 logging.basicConfig(
@@ -37,455 +45,263 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # 导入各层组件
-try:
-    from core.memory_unit import MemoryUnit
-    from core.memory_manager import MemoryManager
-    from storage.chroma_storage import ChromaStorage, chroma_storage_context
-    from retrieval.retrieval_api import RetrievalAPI, SearchMode
-    from retrieval.vector_search import VectorSearchResult
-    from optimization.auto_optimizer import AutoOptimizer
-    from ux.auto_trigger import AutoTrigger, TriggerDecision
-    from ux.tag_manager import TagManager
-    from ux.command_parser import CommandParser, CommandType
-except ImportError:
-    from src.core.memory_unit import MemoryUnit
-    from src.core.memory_manager import MemoryManager
-    from src.storage.chroma_storage import ChromaStorage, chroma_storage_context
-    from src.retrieval.retrieval_api import RetrievalAPI, SearchMode
-    from src.retrieval.vector_search import VectorSearchResult
-    from src.optimization.auto_optimizer import AutoOptimizer
-    from src.ux.auto_trigger import AutoTrigger, TriggerDecision
-    from src.ux.tag_manager import TagManager
-    from src.ux.command_parser import CommandParser, CommandType
+from core.memory_unit import MemoryUnit
+from core.memory_manager import MemoryManager
+from core.core_memory_manager import CoreMemoryManager
+from storage.chroma_storage import ChromaStorage, chroma_storage_context
+from retrieval.retrieval_api import RetrievalAPI, SearchMode
+from retrieval.vector_search import VectorSearchResult
+from optimization.auto_optimizer import AutoOptimizer
+from ux.auto_trigger import AutoTrigger, TriggerDecision
+from ux.tag_manager import TagManager
+from ux.command_parser import CommandParser, CommandType
+from ux.conversation_saver import ConversationSaver, SaveResult
 
 
 @dataclass
-class MemorySystemConfig:
-    """记忆系统配置"""
-    storage_path: str = "./data/memory_db"
-    collection_name: str = "memories"
-    model_name: str = "all-MiniLM-L6-v2"
-    enable_auto_optimize: bool = True
-    enable_auto_trigger: bool = True
-    cache_size: int = 1000
-    min_confidence: float = 0.6
+class MemoryStats:
+    """记忆统计信息"""
+    total_memories: int
+    tier_distribution: Dict[str, int]
+    tag_count: int
+    last_added: Optional[str] = None
 
 
 class MemorySystem:
     """
     记忆系统统一入口
     
-    整合四层架构，提供简洁的API。
+    整合所有组件，提供简洁的API供外部调用。
     """
     
     def __init__(
         self,
-        storage: ChromaStorage,
-        retrieval_api: RetrievalAPI,
-        auto_optimizer: Optional[AutoOptimizer] = None,
-        auto_trigger: Optional[AutoTrigger] = None,
-        tag_manager: Optional[TagManager] = None,
-        config: Optional[MemorySystemConfig] = None
+        data_dir: Optional[str] = None,
+        enable_chroma: bool = False,
+        enable_optimizer: bool = False
     ):
         """
         初始化记忆系统
         
         Args:
-            storage: 存储后端
-            retrieval_api: 检索API
-            auto_optimizer: 自动优化器
-            auto_trigger: 自动触发器
-            tag_manager: 标签管理器
-            config: 配置
+            data_dir: 数据目录，默认使用环境变量或默认路径
+            enable_chroma: 是否启用ChromaDB向量存储
+            enable_optimizer: 是否启用自动优化
         """
-        self.storage = storage
-        self.retrieval_api = retrieval_api
-        self.auto_optimizer = auto_optimizer
-        self.auto_trigger = auto_trigger
-        self.tag_manager = tag_manager
-        self.config = config or MemorySystemConfig()
+        # 解析数据目录
+        self.data_dir = Path(data_dir) if data_dir else self._resolve_data_dir()
+        self.data_dir.mkdir(parents=True, exist_ok=True)
         
-        # 启动自动优化
-        if self.auto_optimizer and self.config.enable_auto_optimize:
-            self.auto_optimizer.start()
+        logger.info(f"MemorySystem 初始化: data_dir={self.data_dir}")
         
-        logger.info("记忆系统初始化完成")
+        # 初始化各组件
+        self.memory_manager = MemoryManager(str(self.data_dir))
+        self.core_manager = CoreMemoryManager()
+        self.tag_manager = TagManager(str(self.data_dir))
+        self.command_parser = CommandParser()
+        
+        # 初始化对话保存器（T2新增）
+        self._conversation_saver = ConversationSaver()
+        
+        # 可选组件
+        self.chroma_storage = None
+        self.retrieval_api = None
+        self.auto_optimizer = None
+        self.auto_trigger = None
+        
+        if enable_chroma:
+            try:
+                self.chroma_storage = ChromaStorage(str(self.data_dir / "chroma_db"))
+                self.retrieval_api = RetrievalAPI(self.chroma_storage)
+                logger.info("ChromaDB 已启用")
+            except Exception as e:
+                logger.warning(f"ChromaDB 启用失败: {e}")
+        
+        if enable_optimizer:
+            self.auto_optimizer = AutoOptimizer(self.memory_manager)
+            self.auto_trigger = AutoTrigger(self.memory_manager)
+            logger.info("自动优化已启用")
+    
+    def _resolve_data_dir(self) -> Path:
+        """解析数据目录"""
+        # 优先从环境变量读取
+        env_path = os.getenv("MEMORY_DATA_DIR")
+        if env_path:
+            return Path(env_path)
+        
+        # 默认路径
+        return Path("D:/AnZai_JieYue/memory/data")
     
     @classmethod
-    def create_default(
-        cls,
-        storage_path: str = "./data/memory_db",
-        collection_name: str = "memories"
-    ) -> "MemorySystem":
-        """
-        创建默认配置的记忆系统
-        
-        Args:
-            storage_path: 存储路径
-            collection_name: 集合名称
-            
-        Returns:
-            MemorySystem实例
-        """
-        logger.info(f"创建记忆系统: path={storage_path}, collection={collection_name}")
-        
-        # 创建存储
-        storage = ChromaStorage(storage_path, collection_name)
-        
-        # 创建检索API
-        retrieval_api = RetrievalAPI.create_default(
-            storage_path=storage_path,
-            collection_name=collection_name
-        )
-        
-        # 创建自动优化器
-        auto_optimizer = AutoOptimizer(
-            storage=storage,
-            enable_monitoring=True,
-            enable_auto_optimize=True
-        )
-        
-        # 创建自动触发器
-        auto_trigger = AutoTrigger(min_confidence=0.6)
-        
-        # 创建标签管理器
-        tag_manager = TagManager()
-        
-        return cls(
-            storage=storage,
-            retrieval_api=retrieval_api,
-            auto_optimizer=auto_optimizer,
-            auto_trigger=auto_trigger,
-            tag_manager=tag_manager
-        )
+    def create_default(cls) -> "MemorySystem":
+        """创建默认配置的记忆系统"""
+        return cls()
+    
+    # ========== 核心API ==========
     
     def remember(
         self,
         content: str,
-        memory_type: str = "fact",
         tags: Optional[List[str]] = None,
-        importance: float = 3.0,
-        source: str = "user"
-    ) -> Optional[str]:
+        importance: float = 1.0
+    ) -> str:
         """
-        记住内容（傻瓜式API）
+        记住内容
         
         Args:
             content: 记忆内容
-            memory_type: 记忆类型
             tags: 标签列表
-            importance: 重要度
-            source: 来源
+            importance: 重要性（1-5）
             
         Returns:
-            记忆ID或None
+            记忆ID
         """
-        try:
-            # 使用检索API添加记忆
-            memory_id = self.retrieval_api.add_memory(
-                content=content,
-                memory_type=memory_type,
-                tags=tags or [],
-                importance=importance,
-                source=source
-            )
-            
-            if memory_id:
-                logger.info(f"已记住: {content[:30]}... (ID: {memory_id})")
-            
-            return memory_id
-            
-        except Exception as e:
-            logger.error(f"记住失败: {e}")
-            return None
+        memory = self.memory_manager.add_memory(
+            content=content,
+            tags=tags or [],
+            importance=importance
+        )
+        
+        # 如果启用了ChromaDB，同步添加
+        if self.chroma_storage and memory.embedding:
+            try:
+                self.chroma_storage.add_memory(memory)
+            except Exception as e:
+                logger.warning(f"ChromaDB同步失败: {e}")
+        
+        return memory.id
     
     def recall(
         self,
         query: str,
-        top_k: int = 10,
-        min_score: float = 0.5,
-        use_hybrid: bool = True
-    ) -> List[Union[VectorSearchResult, Any]]:
+        limit: int = 5,
+        mode: str = "hybrid"
+    ) -> List[MemoryUnit]:
         """
-        回忆内容（傻瓜式API）
+        回忆内容
         
         Args:
-            query: 查询文本
-            top_k: 返回数量
-            min_score: 最小分数
-            use_hybrid: 使用混合检索
+            query: 查询内容
+            limit: 返回数量
+            mode: 检索模式（keyword/vector/hybrid）
             
         Returns:
             记忆列表
         """
-        try:
-            if use_hybrid:
-                response = self.retrieval_api.hybrid_search(
-                    query=query,
-                    top_k=top_k,
-                    min_score=min_score
-                )
-            else:
-                response = self.retrieval_api.vector_search(
-                    query=query,
-                    top_k=top_k,
-                    min_similarity=min_score
-                )
-            
-            results = response.results
-            logger.info(f"回忆: '{query}' -> {len(results)}条结果")
-            
-            return results
-            
-        except Exception as e:
-            logger.error(f"回忆失败: {e}")
-            return []
+        if mode == "keyword":
+            return self.memory_manager.search_by_keywords(query, limit)
+        elif mode == "vector" and self.retrieval_api:
+            return self.retrieval_api.vector_search(query, limit)
+        else:
+            # 默认使用关键词搜索
+            return self.memory_manager.search_by_keywords(query, limit)
     
-    def forget(self, memory_id: str) -> bool:
+    def get_stats(self) -> MemoryStats:
+        """获取统计信息"""
+        stats = self.memory_manager.get_stats()
+        return MemoryStats(
+            total_memories=stats.get("total", 0),
+            tier_distribution=stats.get("tiers", {}),
+            tag_count=len(self.tag_manager.get_all_tags()),
+            last_added=stats.get("last_added")
+        )
+    
+    # ========== 自动加载上下文（T1新增） ==========
+    
+    def auto_load_context(
+        self,
+        limit: int = 5,
+        output_format: str = "markdown"
+    ) -> str:
         """
-        遗忘内容（傻瓜式API）
+        自动加载最近核心记忆
+        
+        在对话启动时调用，返回格式化的上下文摘要。
         
         Args:
-            memory_id: 记忆ID
+            limit: 加载记忆数量，默认5条
+            output_format: 输出格式，"markdown"或"json"
             
         Returns:
-            是否成功
+            格式化的上下文摘要字符串
+            
+        Example:
+            >>> system = MemorySystem.create_default()
+            >>> context = system.auto_load_context(limit=5)
+            >>> print(context)
         """
         try:
-            result = self.retrieval_api.remove_memory(memory_id)
+            # 检查是否已加载过（避免重复加载）
+            if os.getenv("MEMORY_AUTO_LOAD_DONE"):
+                return ""
             
-            if result:
-                logger.info(f"已遗忘: {memory_id}")
+            # 获取最近记忆
+            memories = self.core_manager.get_recent_memories(limit=limit, tier="core")
+            
+            # 格式化为指定格式
+            if output_format == "json":
+                result = self.core_manager.format_json(memories)
+            else:
+                result = self.core_manager.format_markdown(memories)
+            
+            # 标记已加载
+            os.environ["MEMORY_AUTO_LOAD_DONE"] = "1"
             
             return result
             
         except Exception as e:
-            logger.error(f"遗忘失败: {e}")
-            return False
+            logger.warning(f"自动加载上下文失败: {e}")
+            return "已自动加载上下文：\n\n暂无核心记忆\n\n---\n安哥，已准备好继续。"
     
-    def should_remember(self, content: str, context: Optional[Dict] = None) -> TriggerDecision:
+    def reset_auto_load_flag(self):
+        """重置自动加载标记（用于测试）"""
+        if "MEMORY_AUTO_LOAD_DONE" in os.environ:
+            del os.environ["MEMORY_AUTO_LOAD_DONE"]
+    
+    def on_message(self, role: str, content: str) -> SaveResult:
         """
-        判断是否值得记住（自动触发）
+        对话消息入口（T2新增）
+        
+        每条消息都经过这个方法，自动处理保存逻辑。
         
         Args:
-            content: 内容
-            context: 上下文
-            
-        Returns:
-            触发决策
-        """
-        if not self.auto_trigger:
-            return TriggerDecision(
-                should_save=True,
-                confidence=1.0,
-                reason="无自动触发器，默认保存",
-                strategy="default"
-            )
-        
-        return self.auto_trigger.should_save(content, context)
-    
-    def process_message(
-        self,
-        role: str,
-        content: str,
-        auto_save: bool = True
-    ) -> Dict[str, Any]:
-        """
-        处理消息（全自动模式）
-        
-        Args:
-            role: 角色 (user/assistant)
+            role: "user" 或 "assistant"
             content: 消息内容
-            auto_save: 自动保存
             
         Returns:
-            处理结果
+            SaveResult
         """
-        result = {
-            "saved": False,
-            "memory_id": None,
-            "decision": None
-        }
-        
-        # 解析命令
-        parser = CommandParser()
-        command = parser.parse(content)
-        
-        # 处理命令
-        if command.command_type == CommandType.REMEMBER:
-            # 明确保存指令
-            memory_id = self.remember(
-                content=command.content,
-                tags=command.tags
-            )
-            result["saved"] = memory_id is not None
-            result["memory_id"] = memory_id
-            
-        elif command.command_type == CommandType.FORGET:
-            # 删除指令
-            if command.memory_id:
-                result["forgotten"] = self.forget(command.memory_id)
-                
-        elif command.command_type == CommandType.SEARCH:
-            # 搜索指令
-            results = self.recall(command.query)
-            result["search_results"] = results
-            
-        elif auto_save and role == "user":
-            # 自动判断是否保存
-            decision = self.should_remember(content)
-            result["decision"] = decision
-            
-            if decision.should_save:
-                memory_id = self.remember(content)
-                result["saved"] = memory_id is not None
-                result["memory_id"] = memory_id
-        
-        return result
+        logger.info(f"处理消息: role={role}, content={content[:50]}...")
+        return self._conversation_saver.on_message(role, content)
     
-    def get_stats(self) -> Dict[str, Any]:
+    def end_conversation(self) -> str:
         """
-        获取系统统计
+        结束对话（T2新增）
+        
+        强制保存并生成会话摘要。
         
         Returns:
-            统计信息
+            保存的文件路径
         """
-        stats = {
-            "storage": {},
-            "retrieval": {},
-            "optimization": {},
-            "timestamp": None
-        }
+        logger.info("结束对话，强制保存")
+        file_path = self._conversation_saver.force_save()
         
-        try:
-            # 存储统计
-            stats["storage"] = {
-                "total_memories": self.storage.count(),
-                "collection_name": self.storage.collection_name
-            }
-        except Exception as e:
-            logger.warning(f"获取存储统计失败: {e}")
+        # 生成摘要
+        summary = self._conversation_saver.get_session_summary()
+        logger.info(f"会话摘要: {summary}")
         
-        try:
-            # 检索统计
-            stats["retrieval"] = self.retrieval_api.get_stats()
-        except Exception as e:
-            logger.warning(f"获取检索统计失败: {e}")
-        
-        try:
-            # 优化统计
-            if self.auto_optimizer:
-                stats["optimization"] = {
-                    "performance": self.auto_optimizer.get_performance_stats(),
-                    "cache": self.auto_optimizer.get_cache_stats()
-                }
-        except Exception as e:
-            logger.warning(f"获取优化统计失败: {e}")
-        
-        from datetime import datetime
-        stats["timestamp"] = datetime.now().isoformat()
-        
-        return stats
-    
-    def get_optimization_report(self) -> str:
-        """
-        获取优化报告
-        
-        Returns:
-            优化报告
-        """
-        if self.auto_optimizer:
-            return self.auto_optimizer.get_optimization_report()
-        return "自动优化器未启用"
+        return file_path
     
     def close(self):
-        """关闭系统"""
-        logger.info("关闭记忆系统...")
-        
-        if self.auto_optimizer:
-            self.auto_optimizer.stop()
-        
-        # 关闭存储连接
-        try:
-            self.storage.close()
-        except:
-            pass
-        
-        logger.info("记忆系统已关闭")
-    
-    def __enter__(self):
-        """上下文管理器入口"""
-        return self
-    
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        """上下文管理器出口"""
-        self.close()
-        return False
+        """关闭系统，释放资源"""
+        if self.chroma_storage:
+            try:
+                # ChromaDB不需要显式关闭
+                pass
+            except Exception as e:
+                logger.warning(f"关闭ChromaDB失败: {e}")
+        logger.info("MemorySystem 已关闭")
 
 
-# 便捷函数
-def quick_remember(content: str, **kwargs) -> Optional[str]:
-    """
-    快速记住（无需创建系统实例）
-    
-    Args:
-        content: 内容
-        **kwargs: 其他参数
-        
-    Returns:
-        记忆ID
-    """
-    system = MemorySystem.create_default()
-    with system:
-        return system.remember(content, **kwargs)
-
-
-def quick_recall(query: str, **kwargs) -> List[Any]:
-    """
-    快速回忆（无需创建系统实例）
-    
-    Args:
-        query: 查询
-        **kwargs: 其他参数
-        
-    Returns:
-        结果列表
-    """
-    system = MemorySystem.create_default()
-    with system:
-        return system.recall(query, **kwargs)
-
-
-if __name__ == "__main__":
-    # 测试代码
-    print("=" * 50)
-    print("记忆系统 v3.0 测试")
-    print("=" * 50)
-    
-    # 创建系统
-    system = MemorySystem.create_default("./test_data", "test_memories")
-    
-    print("\n1. 测试记住")
-    memory_id = system.remember(
-        content="我喜欢在早晨喝咖啡",
-        tags=["饮食", "偏好"],
-        importance=4.0
-    )
-    print(f"   记忆ID: {memory_id}")
-    
-    print("\n2. 测试回忆")
-    results = system.recall("咖啡", top_k=5)
-    print(f"   找到 {len(results)} 条记忆")
-    for r in results:
-        print(f"   - {r.content[:30]}...")
-    
-    print("\n3. 测试统计")
-    stats = system.get_stats()
-    print(f"   存储: {stats['storage']}")
-    
-    print("\n4. 关闭系统")
-    system.close()
-    
-    print("\n" + "=" * 50)
-    print("测试完成!")
-    print("=" * 50)
+# 向后兼容
+AutoMemory = MemorySystem

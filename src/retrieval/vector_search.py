@@ -354,6 +354,21 @@ class VectorSearch:
             logger.error(f"删除文档失败 {memory_id}: {e}")
             return False
     
+    def count(self) -> int:
+        """
+        获取索引中的文档总数
+        
+        Returns:
+            文档总数
+        """
+        if self._use_memory_storage:
+            return len(self._documents)
+        else:
+            try:
+                return self.storage.count()
+            except Exception:
+                return 0
+    
     def get_stats(self) -> Dict[str, Any]:
         """
         获取索引统计信息

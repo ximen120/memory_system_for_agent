@@ -9,20 +9,21 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import json
 
+# 处理导入路径
+import sys
+_src_core = Path(__file__).parent
+_src_root = _src_core.parent
+if str(_src_root) not in sys.path:
+    sys.path.insert(0, str(_src_root))
+
+from core.memory_unit import MemoryUnit
+from core.timestamp_utils import now, to_datetime
+from storage.base_storage import BaseStorage, StorageError
+from storage.json_storage import JsonStorage
 try:
-    from .memory_unit import MemoryUnit
-    from .timestamp_utils import now, to_datetime
-    from ..storage.base_storage import BaseStorage, StorageError
-    from ..storage.json_storage import JsonStorage
-    from ..retrieval.embedding_generator import EmbeddingGenerator
+    from retrieval.embedding_generator import EmbeddingGenerator
 except ImportError:
-    from memory_unit import MemoryUnit
-    from timestamp_utils import now, to_datetime
-    import sys
-    sys.path.insert(0, str(Path(__file__).parent.parent / "storage"))
-    sys.path.insert(0, str(Path(__file__).parent.parent / "retrieval"))
-    from base_storage import BaseStorage, StorageError
-    from json_storage import JsonStorage
+    EmbeddingGenerator = None
 
 
 class MemoryTier:

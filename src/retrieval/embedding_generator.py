@@ -44,6 +44,11 @@ class EmbeddingGenerator:
             "dim": 1024,
             "max_length": 8192,
             "description": "高性能多语言模型"
+        },
+        "BAAI/bge-small-zh-v1.5": {
+            "dim": 512,
+            "max_length": 512,
+            "description": "中文优化模型，体积小速度快，中文语义检索效果优秀"
         }
     }
     

@@ -15,6 +15,7 @@ from .vector_api import VectorAPI
 from .hybrid_api import HybridAPI
 from .keyword_api import KeywordAPI
 from .routes import APIRouter
+from core.config_loader import Config
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +59,7 @@ class UnifiedAPI:
     def __init__(
         self,
         data_dir: str = "./data",
-        embedding_model: str = "all-MiniLM-L6-v2",
+        embedding_model: Optional[str] = None,
         auto_init: bool = True
     ):
         """
@@ -66,23 +67,46 @@ class UnifiedAPI:
         
         Args:
             data_dir: 数据目录
-            embedding_model: Embedding模型名称
+            embedding_model: Embedding模型名称，默认从.env读取
             auto_init: 是否自动初始化
         """
         self.data_dir = data_dir
+        # 如果没有指定模型，从.env读取
+        if embedding_model is None:
+            cfg = Config()
+            embedding_model = cfg.embedding_model
         self.embedding_model = embedding_model
         
         # 初始化各API
         self.memory_api = MemoryAPI(data_dir=data_dir, embedding_model=embedding_model)
         self.vector_api = VectorAPI(embedding_service=self.memory_api.embedding_service, vector_search=self.memory_api.vector_search)
-        self.hybrid_api = HybridAPI()
+        self.hybrid_api = HybridAPI(embedding_service=self.memory_api.embedding_service, vector_search=self.memory_api.vector_search)
         self.keyword_api = KeywordAPI()
         self.router = APIRouter()
         
         if auto_init:
             self._initialize()
         
+        # 启动时将已有记忆同步到 KeywordAPI（修复：keyword 纯内存索引重启后丢失）
+        self._sync_keyword_index()
+        
         logger.info(f"UnifiedAPI v{self.VERSION} 初始化完成")
+    
+    def _sync_keyword_index(self):
+        """将 MemoryAPI 中已加载的记忆同步到 KeywordAPI 的内存索引"""
+        try:
+            for memory_id, memory in self.memory_api._memories.items():
+                self.keyword_api.add_document(
+                    memory_id=memory_id,
+                    content=memory.content,
+                    memory_type=memory.memory_type,
+                    importance=memory.importance,
+                    tags=memory.tags,
+                    metadata=memory.metadata
+                )
+            logger.info(f"已同步 {len(self.memory_api._memories)} 条记忆到关键词索引")
+        except Exception as e:
+            logger.error(f"同步关键词索引失败: {e}")
     
     def _initialize(self):
         """初始化系统"""

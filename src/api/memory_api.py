@@ -117,6 +117,7 @@ class MemoryAPI:
         """从存储加载已有记忆到内存缓存"""
         try:
             existing_memories = self.json_storage.query(limit=99999)
+            repaired_count = 0
             for memory_unit in existing_memories:
                 # 转换为Memory对象
                 memory = Memory(
@@ -135,6 +136,17 @@ class MemoryAPI:
                 )
                 self._memories[memory_unit.memory_id] = memory
                 
+                # 修复：对缺失 embedding 的旧记忆重新生成并回写 JSON
+                if self.embedding_service.is_available() and not memory_unit.embedding:
+                    embedding = self.embedding_service.generate(memory_unit.content)
+                    if embedding:
+                        memory_unit.embedding = embedding
+                        try:
+                            self.json_storage.save(memory_unit)
+                            repaired_count += 1
+                        except Exception as e:
+                            logger.error(f"回写embedding失败: {memory_unit.memory_id}: {e}")
+                
                 # 添加到向量检索
                 if self.embedding_service.is_available() and memory_unit.embedding:
                     self.vector_search.add_document(
@@ -149,6 +161,8 @@ class MemoryAPI:
                         }
                     )
             
+            if repaired_count > 0:
+                logger.info(f"修复了 {repaired_count} 条缺失embedding的记忆")
             logger.info(f"从存储加载了 {len(existing_memories)} 条记忆")
         except Exception as e:
             logger.error(f"加载已有记忆失败: {e}")
@@ -198,9 +212,15 @@ class MemoryAPI:
             metadata=metadata
         )
         
-        # 保存到内存存储
+        # 保存到内存缓存
+        self._memories[memory_id] = memory
+        
+        # 先生成 embedding（修复：确保 embedding 一起持久化到 JSON）
+        embedding = None
+        if self.embedding_service.is_available():
+            embedding = self.embedding_service.generate(content)
 
-        # 持久化到存储
+        # 持久化到存储（含 embedding）
         try:
             memory_unit = MemoryUnit(
                 memory_id=memory_id,
@@ -212,28 +232,26 @@ class MemoryAPI:
                 updated_at=None,
                 source=metadata.get("source"),
                 access_count=0,
-                last_accessed_at=None
+                last_accessed_at=None,
+                embedding=embedding
             )
             self.json_storage.save(memory_unit)
         except Exception as e:
             logger.error(f"持久化记忆失败: {e}")
-        self._memories[memory_id] = memory
         
-        # 添加到向量检索（如果Embedding服务可用）
-        if self.embedding_service.is_available():
-            embedding = self.embedding_service.generate(content)
-            if embedding:
-                self.vector_search.add_document(
-                    memory_id=memory_id,
-                    content=content,
-                    embedding=embedding,
-                    memory_type=memory_type,
-                    metadata={
-                        "importance": importance,
-                        "tags": tags or [],
-                        **metadata
-                    }
-                )
+        # 添加到向量检索内存索引
+        if embedding:
+            self.vector_search.add_document(
+                memory_id=memory_id,
+                content=content,
+                embedding=embedding,
+                memory_type=memory_type,
+                metadata={
+                    "importance": importance,
+                    "tags": tags or [],
+                    **metadata
+                }
+            )
         
         logger.info(f"记忆已添加: {memory_id}")
         return memory_id
@@ -243,7 +261,7 @@ class MemoryAPI:
         query: str,
         search_type: str = "hybrid",  # "vector" | "keyword" | "hybrid"
         top_k: int = 10,
-        min_score: float = 0.05,
+        min_score: float = 0.0,
         filters: Optional[Dict[str, Any]] = None
     ) -> List[SearchResult]:
         """

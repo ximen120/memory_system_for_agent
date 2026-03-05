@@ -70,6 +70,19 @@ class MemoryInitializer:
             recent_memories = recent(10)
             total_memories = get_bridge().stats()['total']
             
+            # 3.5 自动加载核心记忆上下文
+            try:
+                sys.path.insert(0, 'src')
+                from core.core_memory_manager import CoreMemoryManager
+                core_manager = CoreMemoryManager()
+                core_memories = core_manager.get_recent_memories(limit=5, tier="core")
+                if core_memories:
+                    print()
+                    print(core_manager.format_markdown(core_memories))
+                    print()
+            except Exception as e:
+                print(f"注意: 自动加载上下文失败: {e}")
+            
             # 4. 生成状态报告
             result['success'] = True
             result['status'] = '记忆系统已就绪'  # 使用统一的"就绪"状态
